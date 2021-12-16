@@ -1,0 +1,10 @@
+samples: samples.tsv
+
+
+genome_folder: "genomes/m38p6/"
+genome_unzipped_path: "genomes/m38p6/GRCm38.primary_assembly.genome.fa"
+transcriptome_gtf_path: "genomes/m38p6/gencode.vM23.primary_assembly.annotation.gtf"
+
+threads_fastp: 16
+
+fastp_min_read_length: 26

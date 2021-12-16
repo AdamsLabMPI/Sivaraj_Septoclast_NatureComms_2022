@@ -1,0 +1,1163 @@
+---
+title: "Septoclasts STAR Workflow"
+author: "Paul-Georg Majev"
+date: "6 7 2020"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+
+## Setup
+```{r setup, include=TRUE}
+library(here)
+
+source(here::here("Processing","helpers.R") )
+
+seed_num <- 42L
+
+export.path <- here::here("Processing","results")
+export.path_graphs <- here::here(export.path,"Figures")
+dir.create(file.path(export.path_graphs), showWarnings = FALSE,recursive=TRUE)
+export.path_objects <- here::here(export.path,"Objects")  
+dir.create(file.path(export.path_objects), showWarnings = FALSE,recursive=TRUE)
+export.path_tables <- here::here(export.path,"Tables")  
+dir.create(file.path(export.path_tables), showWarnings = FALSE,recursive=TRUE)
+```
+
+
+
+
+
+##MP
+### mp-1 Filter
+```{r mp-1_filter}
+
+STAR_path=here::here("Preprocessing","Metaphyseal_Dataset","results","STAR","Mp-1_Solo.out/")
+
+#####
+library_size_lower <- 200
+library_size_upper <- 10000000
+
+number_features_lower <- 1500
+number_features_upper <- 10000000
+
+complexity <- 0
+
+min_cells_per_feature <- 10
+
+mito_level <- 15
+ribo_level <- 30
+hb_level <- 100
+
+#####IMPORT#####
+c(RNA_mat_orig, spliced_mat, unspliced_mat) %<-% Import_STAR_Velocyto(folder_path=STAR_path)
+
+
+RNA_mat_orig_colsum <- as.data.frame( colSums(RNA_mat_orig) ) %>% rownames_to_column("Cell") %>% rename(GEX=2)
+RNA_mat_orig_filtered <- RNA_mat_orig[,colSums(RNA_mat_orig) >1]
+
+orig_cells <- colnames(RNA_mat_orig)
+orig_genes <- nrow(RNA_mat_orig)
+
+seurat_Mp1 <- CreateSeuratObject(
+  counts = RNA_mat_orig_filtered,
+  assay = "RNA",
+  names.field=1,
+  names.delim="-",
+  min.cells=10,
+  min.features=1
+)
+
+
+spliced_object <- CreateAssayObject(counts = spliced_mat[,colnames(seurat_Mp1)])
+seurat_Mp1[["spliced"]] <- spliced_object
+
+unspliced_object <- CreateAssayObject(counts = unspliced_mat[,colnames(seurat_Mp1)])
+seurat_Mp1[["unspliced"]] <- unspliced_object
+
+seurat_Mp1$log10GenesPerUMI <- ifelse(seurat_Mp1$nFeature_RNA == 0 | seurat_Mp1$nCount_RNA == 0,0,log10(seurat_Mp1$nFeature_RNA) / log10(seurat_Mp1$nCount_RNA))
+
+
+mito_genes <- rownames(RNA_mat_orig)[grep("^mt-", rownames(RNA_mat_orig))]
+ribo_genes <- rownames(RNA_mat_orig)[grep("^Rp[sl]", rownames(RNA_mat_orig))]
+ribo_genes <- c(ribo_genes,"Rn18s")
+hb_genes <- rownames(RNA_mat_orig)[grep("^Hb[abq]", rownames(RNA_mat_orig))]
+
+seurat_Mp1$mito_percent <- PercentageFeatureSet(object = seurat_Mp1, features=mito_genes[mito_genes %in% rownames(seurat_Mp1)],assay="RNA")
+seurat_Mp1$ribo_percent <- PercentageFeatureSet(object = seurat_Mp1, features=ribo_genes[ribo_genes %in% rownames(seurat_Mp1)],assay="RNA")
+seurat_Mp1$hb_percent <- PercentageFeatureSet(object = seurat_Mp1, features=hb_genes[hb_genes %in% rownames(seurat_Mp1)],assay="RNA")
+
+seurat_Mp1$mito_ratio <- seurat_Mp1@meta.data$mito_percent / 100
+
+top_genes_before <- plot_pct_genes(GetAssayData(seurat_Mp1, slot = "counts"),top_n=10)
+
+ggsave(here(export.path_graphs,"/Mp1_TopGenes_before.png"),top_genes_before, width=10, height=10, limitsize=F)
+
+umi_per_cell <- seurat_Mp1@meta.data %>% mutate(nCount_RNA=nCount_RNA+1) %>%
+      ggdensity(x = "nCount_RNA",
+                add = "mean", rug = TRUE,
+                palette = c("#00AFBB", "#E7B800"))+
+      scale_x_log10(limits=c(10,50000)) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = c(library_size_lower))+labs(title="Number of UMIs per Cell (higher= better)")
+
+ggsave(here(export.path_graphs,"/Mp1_UMI_per_cell.png"),umi_per_cell, width=10, height=10, limitsize=F)
+
+lib_size <- ggplot(seurat_Mp1@meta.data, aes(x=nCount_RNA)) +
+      geom_histogram(aes(y=..count..),color="black",fill="black",bins = 1000)+
+      labs(x = "Total Counts in Cell(Library Size)", y = "Counts") +
+      theme_classic()+ geom_vline(xintercept = c(library_size_lower),colour = "red")+
+      scale_colour_manual("Distribution", values = c("#cc0000", "#E69F00", "#56B4E9"))+
+      scale_x_log10(limits=c(10,100000))
+ 
+    ggsave(here(export.path_graphs,"/Mp1_UMI_per_cell2.png"),lib_size, width=10, height=10, limitsize=F) 
+    
+features_per_cell <- seurat_Mp1@meta.data %>%
+      ggdensity(x = "nFeature_RNA",
+                add = "mean", rug = TRUE,
+                palette = c("#00AFBB", "#E7B800")) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = c(number_features_lower) )+labs(title="Number of Features per Cell (higher= better)")+
+      scale_x_log10(limits=c(10,50000))
+
+ggsave(here(export.path_graphs,"/Mp1_Features_per_cell.png"),features_per_cell, width=10, height=10, limitsize=F)
+
+feature_size <- ggplot(seurat_Mp1@meta.data, aes(x=nFeature_RNA)) +
+      geom_histogram(aes(y=..count..),color="black",fill="black",bins = 1000)+
+      labs(x = "Features per Cell", y = "Counts") +
+      theme_classic()+ geom_vline(xintercept = c(number_features_lower),colour = "red")+
+      scale_colour_manual("Distribution", values = c("#cc0000", "#E69F00", "#56B4E9"))+
+      scale_x_log10(limits=c(20,100000))
+
+ggsave(here(export.path_graphs,"/Mp1_Features_per_cell2.png"),feature_size, width=10, height=10, limitsize=F)
+
+complexity_plot <- seurat_Mp1@meta.data %>%
+      ggdensity(x = "log10GenesPerUMI",
+                add = "mean", rug = TRUE, alpha = 0.2,
+                palette = c("#00AFBB", "#E7B800"))+
+      scale_x_log10(oob=squish) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = complexity)+labs(title="Complexity as Genes per UMI (higher = better)") +scale_x_continuous(limits=c(0.001,1))
+  	
+ggsave(here(export.path_graphs,"/Mp1_Complexity_per_cell.png"),complexity_plot, width=10, height=10, limitsize=F)
+
+
+seurat_Mp1@meta.data$low.lib_mads <- as.logical( isOutlier(seurat_Mp1@meta.data$nCount_RNA, log=TRUE, nmads=3, type="both") )
+
+seurat_Mp1@meta.data$nfeat_outlier <- as.logical( isOutlier(seurat_Mp1@meta.data$nFeature_RNA, log=TRUE, nmads=3, type="both") )
+
+seurat_Mp1@meta.data$mito_outlier <- as.logical( isOutlier(seurat_Mp1@meta.data$mito_percent, type="higher",nmads=3) )
+
+seurat_Mp1@meta.data$ribo_outlier <- as.logical( isOutlier(seurat_Mp1@meta.data$ribo_percent, type="higher",nmads=3) )
+
+seurat_Mp1@meta.data$hb_outlier <- as.logical( isOutlier(seurat_Mp1@meta.data$hb_percent, type="higher",nmads=3) )
+
+
+features_to_keep <- rowSums(seurat_Mp1@assays$RNA@counts > 0) >= min_cells_per_feature
+features_to_keep <- names(features_to_keep[features_to_keep == TRUE])
+
+bc_rank <- barcodeRanks(seurat_Mp1@assays$RNA@counts,lower=1)
+bc_rank_knee_plot <- kneeplot(bc_rank,lower=library_size_lower,upper=library_size_upper)
+
+ggsave(here(export.path_graphs,"/Mp1_KneePlot.png"),bc_rank_knee_plot, width=10, height=10, limitsize=F)
+
+cumsum_df <- data.frame(cell_name=colnames(seurat_Mp1@assays$RNA@counts),col_sums=colSums(seurat_Mp1@assays$RNA@counts),libsize_outliers=seurat_Mp1@meta.data$low.lib_mads) %>% dplyr::arrange(desc(col_sums)) %>%
+      dplyr::mutate(rank = 1:nrow(.)) %>% dplyr::mutate(cum_sum= 100*cumsum(col_sums)/sum(col_sums)) %>% dplyr::arrange(col_sums)
+
+    cumulative_plot <- ggplot(data = cumsum_df,aes(x=rank)) + geom_point(aes(y = cum_sum)) + scale_y_log10() + scale_x_log10() +
+      geom_vline(xintercept = cumsum_df[which.min(abs(cumsum_df$col_sums - library_size_lower)),]$rank , color = "red", linetype = 2)+
+      theme_bw()
+
+
+ggsave(here(export.path_graphs,"/Mp1_CumulativePlot_Counts.png"),cumulative_plot, width=10, height=10, limitsize=F)
+
+det_genes <- data.frame(feature_counts = seurat_Mp1@meta.data$nFeature_RNA,outliers=seurat_Mp1@meta.data$nfeat_outlier)
+
+    detected_genes <- ggplot(det_genes, aes(x=feature_counts,fill=outliers)) +
+      geom_histogram(bins = 1000) +
+      scale_x_log10() +
+      geom_vline(xintercept = c( max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_Mp1@meta.data$nFeature_RNA),na.rm=TRUE) ),colour = "red") +
+      labs(x = "Number of Features per Cell", y = "Frequency") +
+      theme_classic() +
+      geom_text(aes(x=max(number_features_lower,0,na.rm=TRUE)-100, label=paste(max(number_features_lower,0,na.rm=TRUE)), y=20), colour="red", angle=90)+
+      geom_text(aes(x=min(8000,max(seurat_Mp1@meta.data$nFeature_RNA),na.rm=TRUE)-100, label=paste(min(number_features_upper,max(seurat_Mp1@meta.data$nFeature_RNA),na.rm=TRUE)), y=20), colour="red", angle=90)
+
+ggsave(here(export.path_graphs,"/Mp1_DetectedGenes.png"),detected_genes, width=10, height=10, limitsize=F)
+
+cumsum_df_features <- data.frame(cell_name=colnames(seurat_Mp1@assays$RNA@counts),col_sums=seurat_Mp1@meta.data$nFeature_RNA,libsize_outliers=seurat_Mp1@meta.data$nfeat_outlier) %>% dplyr::arrange(desc(col_sums)) %>%
+      dplyr::mutate(rank = 1:nrow(.)) %>% dplyr::mutate(cum_sum= 100*cumsum(col_sums)/sum(col_sums)) %>% dplyr::arrange(col_sums)
+
+cumulative_plot_features <- ggplot(data = cumsum_df_features,aes(x=rank)) + geom_point(aes(y = cum_sum)) + scale_y_log10() + scale_x_log10() +
+      geom_vline(xintercept = cumsum_df_features[which.min(abs(cumsum_df_features$col_sums - number_features_lower)),]$rank , color = "red", linetype = 2)+
+      theme_bw()
+
+
+ggsave(here(export.path_graphs,"/Mp1_CumulativePlot_Features.png"),cumulative_plot_features, width=10, height=10, limitsize=F)
+
+mito_contamination_df <- data.frame(detected=seurat_Mp1@meta.data$nFeature_RNA,mito_percent=seurat_Mp1@meta.data$mito_percent)
+
+mito_contamination <- ggplot(mito_contamination_df,aes(x=detected,y=mito_percent)) +
+      geom_point() +
+      geom_hline(yintercept = c(mito_level),colour = "red") +
+      geom_vline(xintercept = c(max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_Mp1@meta.data$nFeature_RNA),na.rm=TRUE)),colour = "blue")+
+      geom_text(aes(y=mito_level+1, label=paste0(mito_level," %"),x=3000), colour="red")
+
+ggsave(here(export.path_graphs,"/Mp1_MitoContamination.png"),mito_contamination, width=10, height=10, limitsize=F)
+ 
+ribo_contamination_df <- data.frame(detected=seurat_Mp1@meta.data$nFeature_RNA,ribo_percent=seurat_Mp1@meta.data$ribo_percent)
+
+ribo_contamination <- ggplot(ribo_contamination_df,aes(x=detected,y=ribo_percent))+
+      geom_point()+ geom_hline(yintercept = c(ribo_level),colour = "red") + geom_vline(xintercept = c(max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_Mp1@meta.data$nFeature_RNA),na.rm=TRUE)),colour = "blue")+
+      geom_text(aes(y=ribo_level+1, label=paste0(ribo_level," %"),x=3000), colour="red")
+
+ggsave(here(export.path_graphs,"/Mp1_RiboContamination.png"),ribo_contamination, width=10, height=10, limitsize=F)
+
+
+seurat_Mp1@meta.data[is.na(seurat_Mp1@meta.data)] <- 0
+
+    cells_mitochondrial_contamination <- colnames(seurat_Mp1@assays$RNA[,seurat_Mp1@meta.data$mito_percent <= mito_level])
+    cells_ribo_contamination <- colnames(seurat_Mp1@assays$RNA[,seurat_Mp1@meta.data$ribo_percent <= ribo_level])
+    cells_hb_contamination <- colnames(seurat_Mp1@assays$RNA[,seurat_Mp1@meta.data$hb_percent <= hb_level])
+
+    cells_number_features <- colnames(seurat_Mp1@assays$RNA[,seurat_Mp1@meta.data$nFeature_RNA >= number_features_lower])
+
+    cells_number_counts <- colnames(seurat_Mp1@assays$RNA[,seurat_Mp1@meta.data$nCount_RNA >= library_size_lower])
+
+    cells_complexity <- colnames(seurat_Mp1@assays$RNA[,seurat_Mp1@meta.data$log10GenesPerUMI >= complexity])
+
+    filter_GEX_cells <- Reduce(intersect, list(cells_mitochondrial_contamination,cells_ribo_contamination,cells_hb_contamination,cells_number_features,cells_number_counts))
+
+print(paste0("Cells remaining after filtering: ", length(filter_GEX_cells) ))
+
+seurat_Mp1 <- subset(seurat_Mp1,cells = filter_GEX_cells)
+seurat_Mp1 <- subset(seurat_Mp1,features = unique(features_to_keep) )
+
+seurat_Mp1$SAMPLE <- "Mp-1"
+seurat_Mp1$GROUP <- "Mp"
+
+
+lost_cells <- orig_cells %notin% colnames(seurat_Mp1@assays$RNA)
+    kept_cells <- orig_cells %in% colnames(seurat_Mp1@assays$RNA)
+    filtered_genes <- nrow(seurat_Mp1@assays$RNA)
+
+    if(length(lost_cells[lost_cells=="TRUE"]) > 100 & length(kept_cells[kept_cells == "TRUE"]) > 100){
+      orig_sce_lost <- RNA_mat_orig[, lost_cells & colSums(RNA_mat_orig) > 0]
+      lost <- scuttle::calculateAverage(x=orig_sce_lost)
+      lost_df <- as.data.frame(lost)
+      rownames(lost_df) <- make.unique(names(lost), sep = "_")
+
+      orig_sce_kept <- RNA_mat_orig[,kept_cells & colSums(RNA_mat_orig) > 0]
+      kept <- calculateAverage(orig_sce_kept)
+      kept_df <- as.data.frame(kept)
+      rownames(kept_df) <- make.unique(names(kept), sep = "_")
+
+      logged <- edgeR::cpm(cbind(lost_df, kept_df), log=TRUE, prior.count=1)
+      logged_df <- as.data.frame(logged)%>% dplyr::mutate(abundance=rowMeans(.),logFC=lost-kept, gene=rownames(logged),significant=ifelse(abs(logFC) >= 0.25, "TRUE", "FALSE"))
+
+
+      DE_removed_Cells <- ggplot(logged_df, aes(x=abundance, y=logFC)) + geom_point(aes(color = significant)) + theme_cowplot() +
+        geom_text_repel(
+          data = top_n( subset(logged_df, abs(logFC) >= 0.25),50,wt=abs(logFC) ),
+          aes(label = gene),
+          size = 5,
+          box.padding = unit(0.35, "lines"),
+          point.padding = unit(0.3, "lines"),
+          max.overlaps= Inf
+        ) + labs(subtitle = paste0("Lost Cells: ",length(lost_cells[lost_cells=="TRUE"])," Kept Cells: ",length(kept_cells[kept_cells == "TRUE"]) ))
+    }else{
+      DE_removed_Cells <- ggplot() + labs(title="Not enough cells removed (<100) to display DE genes")
+
+    }
+
+ggsave(here(export.path_graphs,"/Mp1_DEGenes.png"),DE_removed_Cells, width=10, height=10, limitsize=F)
+
+top_genes_after <- plot_pct_genes(GetAssayData(seurat_Mp1, slot = "counts"),top_n=10)
+ggsave(here(export.path_graphs,"/Mp1_TopGenes_after.png"),top_genes_after, width=10, height=10, limitsize=F)
+
+saveRDS(seurat_Mp1,file=paste0(export.path_objects,"/Mp1_QC.Rds"))
+```
+
+
+### mp-2 Filter
+```{r mp-2_filter}
+STAR_path="/home/pmajev/Kishor_Septoclasts/results/STAR/Mp-2_Solo.out/"
+
+#####
+library_size_lower <- 200
+library_size_upper <- 10000000
+
+number_features_lower <- 1500
+number_features_upper <- 10000000
+
+complexity <- 0
+
+min_cells_per_feature <- 10
+
+mito_level <- 15
+ribo_level <- 30
+hb_level <- 100
+
+#####IMPORT#####
+c(RNA_mat_orig, spliced_mat, unspliced_mat) %<-% Import_STAR_Velocyto(folder_path=STAR_path)
+
+
+
+RNA_mat_orig_colsum <- as.data.frame( colSums(RNA_mat_orig) ) %>% rownames_to_column("Cell") %>% rename(GEX=2)
+RNA_mat_orig_filtered <- RNA_mat_orig[,colSums(RNA_mat_orig) >1]
+
+orig_cells <- colnames(RNA_mat_orig)
+orig_genes <- nrow(RNA_mat_orig)
+
+seurat_Mp2 <- CreateSeuratObject(
+  counts = RNA_mat_orig_filtered,
+  assay = "RNA",
+  names.field=1,
+  names.delim="-",
+  min.cells=10,
+  min.features=1
+)
+
+
+spliced_object <- CreateAssayObject(counts = spliced_mat[,colnames(seurat_Mp2)])
+seurat_Mp2[["spliced"]] <- spliced_object
+
+unspliced_object <- CreateAssayObject(counts = unspliced_mat[,colnames(seurat_Mp2)])
+seurat_Mp2[["unspliced"]] <- unspliced_object
+
+seurat_Mp2$log10GenesPerUMI <- ifelse(seurat_Mp2$nFeature_RNA == 0 | seurat_Mp2$nCount_RNA == 0,0,log10(seurat_Mp2$nFeature_RNA) / log10(seurat_Mp2$nCount_RNA))
+
+
+mito_genes <- rownames(RNA_mat_orig)[grep("^mt-", rownames(RNA_mat_orig))]
+ribo_genes <- rownames(RNA_mat_orig)[grep("^Rp[sl]", rownames(RNA_mat_orig))]
+ribo_genes <- c(ribo_genes,"Rn18s")
+hb_genes <- rownames(RNA_mat_orig)[grep("^Hb[abq]", rownames(RNA_mat_orig))]
+
+seurat_Mp2$mito_percent <- PercentageFeatureSet(object = seurat_Mp2, features=mito_genes[mito_genes %in% rownames(seurat_Mp2)],assay="RNA")
+seurat_Mp2$ribo_percent <- PercentageFeatureSet(object = seurat_Mp2, features=ribo_genes[ribo_genes %in% rownames(seurat_Mp2)],assay="RNA")
+seurat_Mp2$hb_percent <- PercentageFeatureSet(object = seurat_Mp2, features=hb_genes[hb_genes %in% rownames(seurat_Mp2)],assay="RNA")
+
+seurat_Mp2$mito_ratio <- seurat_Mp2@meta.data$mito_percent / 100
+
+top_genes_before <- plot_pct_genes(GetAssayData(seurat_Mp2, slot = "counts"),top_n=10)
+
+ggsave(here(export.path_graphs,"/Mp2_TopGenes_before.png"),top_genes_before, width=10, height=10, limitsize=F)
+
+umi_per_cell <- seurat_Mp2@meta.data %>% mutate(nCount_RNA=nCount_RNA+1) %>%
+      ggdensity(x = "nCount_RNA",
+                add = "mean", rug = TRUE,
+                palette = c("#00AFBB", "#E7B800"))+
+      scale_x_log10(limits=c(10,50000)) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = c(library_size_lower))+labs(title="Number of UMIs per Cell (higher= better)")
+
+ggsave(here(export.path_graphs,"/Mp2_UMI_per_cell.png"),umi_per_cell, width=10, height=10, limitsize=F)
+
+lib_size <- ggplot(seurat_Mp2@meta.data, aes(x=nCount_RNA)) +
+      geom_histogram(aes(y=..count..),color="black",fill="black",bins = 1000)+
+      labs(x = "Total Counts in Cell(Library Size)", y = "Counts") +
+      theme_classic()+ geom_vline(xintercept = c(library_size_lower),colour = "red")+
+      scale_colour_manual("Distribution", values = c("#cc0000", "#E69F00", "#56B4E9"))+
+      scale_x_log10(limits=c(10,100000))
+ 
+    ggsave(here(export.path_graphs,"/Mp2_UMI_per_cell2.png"),lib_size, width=10, height=10, limitsize=F) 
+    
+features_per_cell <- seurat_Mp2@meta.data %>%
+      ggdensity(x = "nFeature_RNA",
+                add = "mean", rug = TRUE,
+                palette = c("#00AFBB", "#E7B800")) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = c(number_features_lower) )+labs(title="Number of Features per Cell (higher= better)")+
+      scale_x_log10(limits=c(10,50000))
+
+ggsave(here(export.path_graphs,"/Mp2_Features_per_cell.png"),features_per_cell, width=10, height=10, limitsize=F)
+
+feature_size <- ggplot(seurat_Mp2@meta.data, aes(x=nFeature_RNA)) +
+      geom_histogram(aes(y=..count..),color="black",fill="black",bins = 1000)+
+      labs(x = "Features per Cell", y = "Counts") +
+      theme_classic()+ geom_vline(xintercept = c(number_features_lower),colour = "red")+
+      scale_colour_manual("Distribution", values = c("#cc0000", "#E69F00", "#56B4E9"))+
+      scale_x_log10(limits=c(20,100000))
+
+ggsave(here(export.path_graphs,"/Mp2_Features_per_cell2.png"),feature_size, width=10, height=10, limitsize=F)
+
+complexity_plot <- seurat_Mp2@meta.data %>%
+      ggdensity(x = "log10GenesPerUMI",
+                add = "mean", rug = TRUE, alpha = 0.2,
+                palette = c("#00AFBB", "#E7B800"))+
+      scale_x_log10(oob=squish) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = complexity)+labs(title="Complexity as Genes per UMI (higher = better)") +scale_x_continuous(limits=c(0.001,1))
+  	
+ggsave(here(export.path_graphs,"/Mp2_Complexity_per_cell.png"),complexity_plot, width=10, height=10, limitsize=F)
+
+
+seurat_Mp2@meta.data$low.lib_mads <- as.logical( isOutlier(seurat_Mp2@meta.data$nCount_RNA, log=TRUE, nmads=3, type="both") )
+
+seurat_Mp2@meta.data$nfeat_outlier <- as.logical( isOutlier(seurat_Mp2@meta.data$nFeature_RNA, log=TRUE, nmads=3, type="both") )
+
+seurat_Mp2@meta.data$mito_outlier <- as.logical( isOutlier(seurat_Mp2@meta.data$mito_percent, type="higher",nmads=3) )
+
+seurat_Mp2@meta.data$ribo_outlier <- as.logical( isOutlier(seurat_Mp2@meta.data$ribo_percent, type="higher",nmads=3) )
+
+seurat_Mp2@meta.data$hb_outlier <- as.logical( isOutlier(seurat_Mp2@meta.data$hb_percent, type="higher",nmads=3) )
+
+
+features_to_keep <- rowSums(seurat_Mp2@assays$RNA@counts > 0) >= min_cells_per_feature
+features_to_keep <- names(features_to_keep[features_to_keep == TRUE])
+
+bc_rank <- barcodeRanks(seurat_Mp2@assays$RNA@counts,lower=1)
+bc_rank_knee_plot <- kneeplot(bc_rank,lower=library_size_lower,upper=library_size_upper)
+
+ggsave(here(export.path_graphs,"/Mp2_KneePlot.png"),bc_rank_knee_plot, width=10, height=10, limitsize=F)
+
+cumsum_df <- data.frame(cell_name=colnames(seurat_Mp2@assays$RNA@counts),col_sums=colSums(seurat_Mp2@assays$RNA@counts),libsize_outliers=seurat_Mp2@meta.data$low.lib_mads) %>% dplyr::arrange(desc(col_sums)) %>%
+      dplyr::mutate(rank = 1:nrow(.)) %>% dplyr::mutate(cum_sum= 100*cumsum(col_sums)/sum(col_sums)) %>% dplyr::arrange(col_sums)
+
+    cumulative_plot <- ggplot(data = cumsum_df,aes(x=rank)) + geom_point(aes(y = cum_sum)) + scale_y_log10() + scale_x_log10() +
+      geom_vline(xintercept = cumsum_df[which.min(abs(cumsum_df$col_sums - library_size_lower)),]$rank , color = "red", linetype = 2)+
+      theme_bw()
+
+
+ggsave(here(export.path_graphs,"/Mp2_CumulativePlot_Counts.png"),cumulative_plot, width=10, height=10, limitsize=F)
+
+det_genes <- data.frame(feature_counts = seurat_Mp2@meta.data$nFeature_RNA,outliers=seurat_Mp2@meta.data$nfeat_outlier)
+
+    detected_genes <- ggplot(det_genes, aes(x=feature_counts,fill=outliers)) +
+      geom_histogram(bins = 1000) +
+      scale_x_log10() +
+      geom_vline(xintercept = c( max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_Mp2@meta.data$nFeature_RNA),na.rm=TRUE) ),colour = "red") +
+      labs(x = "Number of Features per Cell", y = "Frequency") +
+      theme_classic() +
+      geom_text(aes(x=max(number_features_lower,0,na.rm=TRUE)-100, label=paste(max(number_features_lower,0,na.rm=TRUE)), y=20), colour="red", angle=90)+
+      geom_text(aes(x=min(8000,max(seurat_Mp2@meta.data$nFeature_RNA),na.rm=TRUE)-100, label=paste(min(number_features_upper,max(seurat_Mp2@meta.data$nFeature_RNA),na.rm=TRUE)), y=20), colour="red", angle=90)
+
+ggsave(here(export.path_graphs,"/Mp2_DetectedGenes.png"),detected_genes, width=10, height=10, limitsize=F)
+
+cumsum_df_features <- data.frame(cell_name=colnames(seurat_Mp2@assays$RNA@counts),col_sums=seurat_Mp2@meta.data$nFeature_RNA,libsize_outliers=seurat_Mp2@meta.data$nfeat_outlier) %>% dplyr::arrange(desc(col_sums)) %>%
+      dplyr::mutate(rank = 1:nrow(.)) %>% dplyr::mutate(cum_sum= 100*cumsum(col_sums)/sum(col_sums)) %>% dplyr::arrange(col_sums)
+
+cumulative_plot_features <- ggplot(data = cumsum_df_features,aes(x=rank)) + geom_point(aes(y = cum_sum)) + scale_y_log10() + scale_x_log10() +
+      geom_vline(xintercept = cumsum_df_features[which.min(abs(cumsum_df_features$col_sums - number_features_lower)),]$rank , color = "red", linetype = 2)+
+      theme_bw()
+
+
+ggsave(here(export.path_graphs,"/Mp2_CumulativePlot_Features.png"),cumulative_plot_features, width=10, height=10, limitsize=F)
+
+mito_contamination_df <- data.frame(detected=seurat_Mp2@meta.data$nFeature_RNA,mito_percent=seurat_Mp2@meta.data$mito_percent)
+
+mito_contamination <- ggplot(mito_contamination_df,aes(x=detected,y=mito_percent)) +
+      geom_point() +
+      geom_hline(yintercept = c(mito_level),colour = "red") +
+      geom_vline(xintercept = c(max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_Mp2@meta.data$nFeature_RNA),na.rm=TRUE)),colour = "blue")+
+      geom_text(aes(y=mito_level+1, label=paste0(mito_level," %"),x=3000), colour="red")
+
+ggsave(here(export.path_graphs,"/Mp2_MitoContamination.png"),mito_contamination, width=10, height=10, limitsize=F)
+ 
+ribo_contamination_df <- data.frame(detected=seurat_Mp2@meta.data$nFeature_RNA,ribo_percent=seurat_Mp2@meta.data$ribo_percent)
+
+ribo_contamination <- ggplot(ribo_contamination_df,aes(x=detected,y=ribo_percent))+
+      geom_point()+ geom_hline(yintercept = c(ribo_level),colour = "red") + geom_vline(xintercept = c(max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_Mp2@meta.data$nFeature_RNA),na.rm=TRUE)),colour = "blue")+
+      geom_text(aes(y=ribo_level+1, label=paste0(ribo_level," %"),x=3000), colour="red")
+
+ggsave(here(export.path_graphs,"/Mp2_RiboContamination.png"),ribo_contamination, width=10, height=10, limitsize=F)
+
+
+seurat_Mp2@meta.data[is.na(seurat_Mp2@meta.data)] <- 0
+
+    cells_mitochondrial_contamination <- colnames(seurat_Mp2@assays$RNA[,seurat_Mp2@meta.data$mito_percent <= mito_level])
+    cells_ribo_contamination <- colnames(seurat_Mp2@assays$RNA[,seurat_Mp2@meta.data$ribo_percent <= ribo_level])
+    cells_hb_contamination <- colnames(seurat_Mp2@assays$RNA[,seurat_Mp2@meta.data$hb_percent <= hb_level])
+
+    cells_number_features <- colnames(seurat_Mp2@assays$RNA[,seurat_Mp2@meta.data$nFeature_RNA >= number_features_lower])
+
+    cells_number_counts <- colnames(seurat_Mp2@assays$RNA[,seurat_Mp2@meta.data$nCount_RNA >= library_size_lower])
+
+    cells_complexity <- colnames(seurat_Mp2@assays$RNA[,seurat_Mp2@meta.data$log10GenesPerUMI >= complexity])
+
+    filter_GEX_cells <- Reduce(intersect, list(cells_mitochondrial_contamination,cells_ribo_contamination,cells_hb_contamination,cells_number_features,cells_number_counts))
+
+print(paste0("Cells remaining after filtering: ", length(filter_GEX_cells) ))
+
+seurat_Mp2 <- subset(seurat_Mp2,cells = filter_GEX_cells)
+seurat_Mp2 <- subset(seurat_Mp2,features = unique(features_to_keep) )
+
+seurat_Mp2$SAMPLE <- "Mp-2"
+seurat_Mp2$GROUP <- "Mp"
+
+
+lost_cells <- orig_cells %notin% colnames(seurat_Mp2@assays$RNA)
+    kept_cells <- orig_cells %in% colnames(seurat_Mp2@assays$RNA)
+    filtered_genes <- nrow(seurat_Mp2@assays$RNA)
+
+    if(length(lost_cells[lost_cells=="TRUE"]) > 100 & length(kept_cells[kept_cells == "TRUE"]) > 100){
+      orig_sce_lost <- RNA_mat_orig[, lost_cells & colSums(RNA_mat_orig) > 0]
+      lost <- scuttle::calculateAverage(x=orig_sce_lost)
+      lost_df <- as.data.frame(lost)
+      rownames(lost_df) <- make.unique(names(lost), sep = "_")
+
+      orig_sce_kept <- RNA_mat_orig[,kept_cells & colSums(RNA_mat_orig) > 0]
+      kept <- calculateAverage(orig_sce_kept)
+      kept_df <- as.data.frame(kept)
+      rownames(kept_df) <- make.unique(names(kept), sep = "_")
+
+      logged <- edgeR::cpm(cbind(lost_df, kept_df), log=TRUE, prior.count=1)
+      logged_df <- as.data.frame(logged)%>% dplyr::mutate(abundance=rowMeans(.),logFC=lost-kept, gene=rownames(logged),significant=ifelse(abs(logFC) >= 0.25, "TRUE", "FALSE"))
+
+
+      DE_removed_Cells <- ggplot(logged_df, aes(x=abundance, y=logFC)) + geom_point(aes(color = significant)) + theme_cowplot() +
+        geom_text_repel(
+          data = top_n( subset(logged_df, abs(logFC) >= 0.25),50,wt=abs(logFC) ),
+          aes(label = gene),
+          size = 5,
+          box.padding = unit(0.35, "lines"),
+          point.padding = unit(0.3, "lines"),
+          max.overlaps= Inf
+        ) + labs(subtitle = paste0("Lost Cells: ",length(lost_cells[lost_cells=="TRUE"])," Kept Cells: ",length(kept_cells[kept_cells == "TRUE"]) ))
+    }else{
+      DE_removed_Cells <- ggplot() + labs(title="Not enough cells removed (<100) to display DE genes")
+
+    }
+
+ggsave(here(export.path_graphs,"/Mp2_DEGenes.png"),DE_removed_Cells, width=10, height=10, limitsize=F)
+
+top_genes_after <- plot_pct_genes(GetAssayData(seurat_Mp2, slot = "counts"),top_n=10)
+ggsave(here(export.path_graphs,"/Mp2_TopGenes_after.png"),top_genes_after, width=10, height=10, limitsize=F)
+
+saveRDS(seurat_Mp2,file=paste0(export.path_objects,"/Mp2_QC.Rds"))
+
+```
+
+
+### Merge
+
+```{r control_merged}
+seurat_Mp1 <- readRDS(file=paste0(export.path_objects,"/Mp1_QC.Rds"))
+seurat_Mp2 <- readRDS(file=paste0(export.path_objects,"/Mp2_QC.Rds"))
+
+seurat_object_list <- list("Mp1"=seurat_Mp1,"Mp2"=seurat_Mp2)
+
+
+for (i in 1:length(seurat_object_list)) {
+  sce_temp <- SingleCellExperiment(assays = list(counts = as.matrix(x = seurat_object_list[[i]]@assays[["RNA"]]@counts)))
+  clusters <- quickCluster(sce_temp, min.size=50)
+  sce_temp <- computeSumFactors(sce_temp, cluster=clusters)
+  sce_temp <- logNormCounts(sce_temp, log = FALSE)
+
+  seurat_object_list[[i]]@assays[["RNA"]]@data = log(x = assay(sce_temp, "normcounts") + 1)
+
+  seurat_object_list[[i]] <- FindVariableFeatures(seurat_object_list[[i]], selection.method = "vst", nfeatures = 5000, verbose = FALSE)
+
+}
+
+mp_anchors <- FindIntegrationAnchors(object.list = seurat_object_list, dims = 1:40)
+
+mp_integrated <- IntegrateData(anchorset = mp_anchors, dims = 1:40)
+
+DefaultAssay(mp_integrated) <- "integrated"
+
+mp_integrated <- ScaleData(mp_integrated, verbose = FALSE)
+mp_integrated <- RunPCA(mp_integrated, npcs = 50, verbose = FALSE)
+
+mp_merged_Elbow_Plot <- ElbowPlot(mp_integrated,ndims = 50)
+
+ggsave(here(export.path_graphs,"/Mp_merged_Elbow_Plot.png"),mp_merged_Elbow_Plot, width=10, height=10, limitsize=F)
+
+
+max_dims <- 20
+
+mp_integrated <- RunUMAP(mp_integrated, reduction = "pca", dims = 1:max_dims)
+
+mp_integrated <- FindNeighbors(mp_integrated, reduction = "pca", dims = 1:max_dims)
+
+
+mp_integrated <- FindClusters(mp_integrated, resolution = c(0.4), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100)
+
+mp_merged_UMAP_Plot <- DimPlot(mp_integrated,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Mp_merged_UMAP_Plot.png"),mp_merged_UMAP_Plot, width=10, height=10, limitsize=F)
+
+mp_integrated$final_clusters <- as.character(Idents(mp_integrated))
+saveRDS(mp_integrated,file=paste0(export.path_objects,"/Mp_merged.Rds"))
+
+```
+
+### Cleaned
+
+```{r Mp_merged}
+
+mp_integrated <- readRDS(file=paste0(export.path_objects,"/Mp_merged.Rds"))
+
+
+DefaultAssay(mp_integrated) <- "RNA"
+
+mp_integrated_subset <- subset(x = mp_integrated, idents = c("10","8","11","12","9"), invert = TRUE)
+
+DefaultAssay(mp_integrated_subset) <- "integrated"
+
+mp_integrated_subset <- ScaleData(mp_integrated_subset, verbose = FALSE)
+mp_integrated_subset <- RunPCA(mp_integrated_subset, npcs = 50, verbose = FALSE)
+
+mp_merged_subset_Elbow_Plot <- ElbowPlot(mp_integrated_subset,ndims = 50)
+
+ggsave(here(export.path_graphs,"/Mp_merged_subset_Elbow_Plot.png"),mp_merged_subset_Elbow_Plot, width=10, height=10, limitsize=F)
+max_dims <- 20
+
+mp_integrated_subset <- RunUMAP(mp_integrated_subset, reduction = "pca", dims = 1:max_dims)
+
+mp_integrated_subset <- FindNeighbors(mp_integrated_subset, reduction = "pca", dims = 1:max_dims)
+
+
+mp_integrated_subset <- FindClusters(mp_integrated_subset, resolution = c(0.4), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100)
+
+mp_integrated_subset$final_clusters <- as.character( Idents(mp_integrated_subset) )
+
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `3` = "OB")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `0` = "dpMSC")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `5` = "dpMSC")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `6` = "mpMSC")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `1` = "mpEC")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `2` = "mpEC")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `4` = "bmEC")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `7` = "bmEC")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `9` = "aEC")
+mp_integrated_subset <- RenameIdents(object = mp_integrated_subset, `8` = "pEC")
+
+mp_integrated_subset$final_cell_type <- Idents(mp_integrated_subset)
+
+mp_merged_subset_UMAP_Plot <- DimPlot(mp_integrated_subset,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Mp_merged_subset_UMAP_Plot.png"),mp_merged_subset_UMAP_Plot, width=10, height=10, limitsize=F)
+
+saveRDS(mp_integrated_subset,file=paste0(export.path_objects,"/Mp_merged_subset.Rds"))
+
+```
+
+##Septoclasts
+### Septoclasts Filter
+```{r septoclasts_filter}
+
+STAR_path=here::here("Preprocessing","Septoclast_Dataset","results","STAR","sample_Septoclasts_p21_Solo.out/")
+
+#####
+library_size_lower <- 200
+library_size_upper <- 10000000
+
+number_features_lower <- 1000
+number_features_upper <- 10000000
+
+complexity <- 0
+
+min_cells_per_feature <- 10
+
+mito_level <- 15
+ribo_level <- 30
+hb_level <- 100
+
+#####IMPORT#####
+c(RNA_mat_orig, spliced_mat, unspliced_mat) %<-% Import_STAR_Velocyto(folder_path=STAR_path)
+
+
+RNA_mat_orig_colsum <- as.data.frame( colSums(RNA_mat_orig) ) %>% rownames_to_column("Cell") %>% rename(GEX=2)
+RNA_mat_orig_filtered <- RNA_mat_orig[,colSums(RNA_mat_orig) >1]
+
+orig_cells <- colnames(RNA_mat_orig)
+orig_genes <- nrow(RNA_mat_orig)
+
+seurat_septoclasts <- CreateSeuratObject(
+  counts = RNA_mat_orig_filtered,
+  assay = "RNA",
+  names.field=1,
+  names.delim="-",
+  min.cells=10,
+  min.features=1
+)
+
+
+spliced_object <- CreateAssayObject(counts = spliced_mat[,colnames(seurat_septoclasts)])
+seurat_septoclasts[["spliced"]] <- spliced_object
+
+unspliced_object <- CreateAssayObject(counts = unspliced_mat[,colnames(seurat_septoclasts)])
+seurat_septoclasts[["unspliced"]] <- unspliced_object
+
+seurat_septoclasts$log10GenesPerUMI <- ifelse(seurat_septoclasts$nFeature_RNA == 0 | seurat_septoclasts$nCount_RNA == 0,0,log10(seurat_septoclasts$nFeature_RNA) / log10(seurat_septoclasts$nCount_RNA))
+
+
+mito_genes <- rownames(RNA_mat_orig)[grep("^mt-", rownames(RNA_mat_orig))]
+ribo_genes <- rownames(RNA_mat_orig)[grep("^Rp[sl]", rownames(RNA_mat_orig))]
+ribo_genes <- c(ribo_genes,"Rn18s")
+hb_genes <- rownames(RNA_mat_orig)[grep("^Hb[abq]", rownames(RNA_mat_orig))]
+
+seurat_septoclasts$mito_percent <- PercentageFeatureSet(object = seurat_septoclasts, features=mito_genes[mito_genes %in% rownames(seurat_septoclasts)],assay="RNA")
+seurat_septoclasts$ribo_percent <- PercentageFeatureSet(object = seurat_septoclasts, features=ribo_genes[ribo_genes %in% rownames(seurat_septoclasts)],assay="RNA")
+seurat_septoclasts$hb_percent <- PercentageFeatureSet(object = seurat_septoclasts, features=hb_genes[hb_genes %in% rownames(seurat_septoclasts)],assay="RNA")
+
+seurat_septoclasts$mito_ratio <- seurat_septoclasts@meta.data$mito_percent / 100
+
+top_genes_before <- plot_pct_genes(GetAssayData(seurat_septoclasts, slot = "counts"),top_n=10)
+
+ggsave(here(export.path_graphs,"/Septoclasts_TopGenes_before.png"),top_genes_before, width=10, height=10, limitsize=F)
+
+umi_per_cell <- seurat_septoclasts@meta.data %>% mutate(nCount_RNA=nCount_RNA+1) %>%
+      ggdensity(x = "nCount_RNA",
+                add = "mean", rug = TRUE,
+                palette = c("#00AFBB", "#E7B800"))+
+      scale_x_log10(limits=c(10,50000)) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = c(library_size_lower))+labs(title="Number of UMIs per Cell (higher= better)")
+
+ggsave(here(export.path_graphs,"/Septoclasts_UMI_per_cell.png"),umi_per_cell, width=10, height=10, limitsize=F)
+
+lib_size <- ggplot(seurat_septoclasts@meta.data, aes(x=nCount_RNA)) +
+      geom_histogram(aes(y=..count..),color="black",fill="black",bins = 1000)+
+      labs(x = "Total Counts in Cell(Library Size)", y = "Counts") +
+      theme_classic()+ geom_vline(xintercept = c(library_size_lower),colour = "red")+
+      scale_colour_manual("Distribution", values = c("#cc0000", "#E69F00", "#56B4E9"))+
+      scale_x_log10(limits=c(10,100000))
+ 
+    ggsave(here(export.path_graphs,"/Septoclasts_UMI_per_cell2.png"),lib_size, width=10, height=10, limitsize=F) 
+    
+features_per_cell <- seurat_septoclasts@meta.data %>%
+      ggdensity(x = "nFeature_RNA",
+                add = "mean", rug = TRUE,
+                palette = c("#00AFBB", "#E7B800")) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = c(number_features_lower) )+labs(title="Number of Features per Cell (higher= better)")+
+      scale_x_log10(limits=c(10,50000))
+
+ggsave(here(export.path_graphs,"/Septoclasts_Features_per_cell.png"),features_per_cell, width=10, height=10, limitsize=F)
+
+feature_size <- ggplot(seurat_septoclasts@meta.data, aes(x=nFeature_RNA)) +
+      geom_histogram(aes(y=..count..),color="black",fill="black",bins = 1000)+
+      labs(x = "Features per Cell", y = "Counts") +
+      theme_classic()+ geom_vline(xintercept = c(number_features_lower),colour = "red")+
+      scale_colour_manual("Distribution", values = c("#cc0000", "#E69F00", "#56B4E9"))+
+      scale_x_log10(limits=c(20,100000))
+
+ggsave(here(export.path_graphs,"/Septoclasts_Features_per_cell2.png"),feature_size, width=10, height=10, limitsize=F)
+
+complexity_plot <- seurat_septoclasts@meta.data %>%
+      ggdensity(x = "log10GenesPerUMI",
+                add = "mean", rug = TRUE, alpha = 0.2,
+                palette = c("#00AFBB", "#E7B800"))+
+      scale_x_log10(oob=squish) +
+      theme_classic() +
+      ylab("Cell density") +
+      geom_vline(xintercept = complexity)+labs(title="Complexity as Genes per UMI (higher = better)") +scale_x_continuous(limits=c(0.001,1))
+  	
+ggsave(here(export.path_graphs,"/Septoclasts_Complexity_per_cell.png"),complexity_plot, width=10, height=10, limitsize=F)
+
+
+seurat_septoclasts@meta.data$low.lib_mads <- as.logical( isOutlier(seurat_septoclasts@meta.data$nCount_RNA, log=TRUE, nmads=3, type="both") )
+
+seurat_septoclasts@meta.data$nfeat_outlier <- as.logical( isOutlier(seurat_septoclasts@meta.data$nFeature_RNA, log=TRUE, nmads=3, type="both") )
+
+seurat_septoclasts@meta.data$mito_outlier <- as.logical( isOutlier(seurat_septoclasts@meta.data$mito_percent, type="higher",nmads=3) )
+
+seurat_septoclasts@meta.data$ribo_outlier <- as.logical( isOutlier(seurat_septoclasts@meta.data$ribo_percent, type="higher",nmads=3) )
+
+seurat_septoclasts@meta.data$hb_outlier <- as.logical( isOutlier(seurat_septoclasts@meta.data$hb_percent, type="higher",nmads=3) )
+
+
+features_to_keep <- rowSums(seurat_septoclasts@assays$RNA@counts > 0) >= min_cells_per_feature
+features_to_keep <- names(features_to_keep[features_to_keep == TRUE])
+
+bc_rank <- barcodeRanks(seurat_septoclasts@assays$RNA@counts,lower=1)
+bc_rank_knee_plot <- kneeplot(bc_rank,lower=library_size_lower,upper=library_size_upper)
+
+ggsave(here(export.path_graphs,"/Septoclasts_KneePlot.png"),bc_rank_knee_plot, width=10, height=10, limitsize=F)
+
+cumsum_df <- data.frame(cell_name=colnames(seurat_septoclasts@assays$RNA@counts),col_sums=colSums(seurat_septoclasts@assays$RNA@counts),libsize_outliers=seurat_septoclasts@meta.data$low.lib_mads) %>% dplyr::arrange(desc(col_sums)) %>%
+      dplyr::mutate(rank = 1:nrow(.)) %>% dplyr::mutate(cum_sum= 100*cumsum(col_sums)/sum(col_sums)) %>% dplyr::arrange(col_sums)
+
+    cumulative_plot <- ggplot(data = cumsum_df,aes(x=rank)) + geom_point(aes(y = cum_sum)) + scale_y_log10() + scale_x_log10() +
+      geom_vline(xintercept = cumsum_df[which.min(abs(cumsum_df$col_sums - library_size_lower)),]$rank , color = "red", linetype = 2)+
+      theme_bw()
+
+
+ggsave(here(export.path_graphs,"/Septoclasts_CumulativePlot_Counts.png"),cumulative_plot, width=10, height=10, limitsize=F)
+
+det_genes <- data.frame(feature_counts = seurat_septoclasts@meta.data$nFeature_RNA,outliers=seurat_septoclasts@meta.data$nfeat_outlier)
+
+    detected_genes <- ggplot(det_genes, aes(x=feature_counts,fill=outliers)) +
+      geom_histogram(bins = 1000) +
+      scale_x_log10() +
+      geom_vline(xintercept = c( max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_septoclasts@meta.data$nFeature_RNA),na.rm=TRUE) ),colour = "red") +
+      labs(x = "Number of Features per Cell", y = "Frequency") +
+      theme_classic() +
+      geom_text(aes(x=max(number_features_lower,0,na.rm=TRUE)-100, label=paste(max(number_features_lower,0,na.rm=TRUE)), y=20), colour="red", angle=90)+
+      geom_text(aes(x=min(8000,max(seurat_septoclasts@meta.data$nFeature_RNA),na.rm=TRUE)-100, label=paste(min(number_features_upper,max(seurat_septoclasts@meta.data$nFeature_RNA),na.rm=TRUE)), y=20), colour="red", angle=90)
+
+ggsave(here(export.path_graphs,"/Septoclasts_DetectedGenes.png"),detected_genes, width=10, height=10, limitsize=F)
+
+cumsum_df_features <- data.frame(cell_name=colnames(seurat_septoclasts@assays$RNA@counts),col_sums=seurat_septoclasts@meta.data$nFeature_RNA,libsize_outliers=seurat_septoclasts@meta.data$nfeat_outlier) %>% dplyr::arrange(desc(col_sums)) %>%
+      dplyr::mutate(rank = 1:nrow(.)) %>% dplyr::mutate(cum_sum= 100*cumsum(col_sums)/sum(col_sums)) %>% dplyr::arrange(col_sums)
+
+cumulative_plot_features <- ggplot(data = cumsum_df_features,aes(x=rank)) + geom_point(aes(y = cum_sum)) + scale_y_log10() + scale_x_log10() +
+      geom_vline(xintercept = cumsum_df_features[which.min(abs(cumsum_df_features$col_sums - number_features_lower)),]$rank , color = "red", linetype = 2)+
+      theme_bw()
+
+
+ggsave(here(export.path_graphs,"/Septoclasts_CumulativePlot_Features.png"),cumulative_plot_features, width=10, height=10, limitsize=F)
+
+mito_contamination_df <- data.frame(detected=seurat_septoclasts@meta.data$nFeature_RNA,mito_percent=seurat_septoclasts@meta.data$mito_percent)
+
+mito_contamination <- ggplot(mito_contamination_df,aes(x=detected,y=mito_percent)) +
+      geom_point() +
+      geom_hline(yintercept = c(mito_level),colour = "red") +
+      geom_vline(xintercept = c(max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_septoclasts@meta.data$nFeature_RNA),na.rm=TRUE)),colour = "blue")+
+      geom_text(aes(y=mito_level+1, label=paste0(mito_level," %"),x=3000), colour="red")
+
+ggsave(here(export.path_graphs,"/Septoclasts_MitoContamination.png"),mito_contamination, width=10, height=10, limitsize=F)
+ 
+ribo_contamination_df <- data.frame(detected=seurat_septoclasts@meta.data$nFeature_RNA,ribo_percent=seurat_septoclasts@meta.data$ribo_percent)
+
+ribo_contamination <- ggplot(ribo_contamination_df,aes(x=detected,y=ribo_percent))+
+      geom_point()+ geom_hline(yintercept = c(ribo_level),colour = "red") + geom_vline(xintercept = c(max(number_features_lower,0,na.rm=TRUE),min(number_features_upper,max(seurat_septoclasts@meta.data$nFeature_RNA),na.rm=TRUE)),colour = "blue")+
+      geom_text(aes(y=ribo_level+1, label=paste0(ribo_level," %"),x=3000), colour="red")
+
+ggsave(here(export.path_graphs,"/Septoclasts_RiboContamination.png"),ribo_contamination, width=10, height=10, limitsize=F)
+
+
+seurat_septoclasts@meta.data[is.na(seurat_septoclasts@meta.data)] <- 0
+
+    cells_mitochondrial_contamination <- colnames(seurat_septoclasts@assays$RNA[,seurat_septoclasts@meta.data$mito_percent <= mito_level])
+    cells_ribo_contamination <- colnames(seurat_septoclasts@assays$RNA[,seurat_septoclasts@meta.data$ribo_percent <= ribo_level])
+    cells_hb_contamination <- colnames(seurat_septoclasts@assays$RNA[,seurat_septoclasts@meta.data$hb_percent <= hb_level])
+
+    cells_number_features <- colnames(seurat_septoclasts@assays$RNA[,seurat_septoclasts@meta.data$nFeature_RNA >= number_features_lower])
+
+    cells_number_counts <- colnames(seurat_septoclasts@assays$RNA[,seurat_septoclasts@meta.data$nCount_RNA >= library_size_lower])
+
+    cells_complexity <- colnames(seurat_septoclasts@assays$RNA[,seurat_septoclasts@meta.data$log10GenesPerUMI >= complexity])
+
+    filter_GEX_cells <- Reduce(intersect, list(cells_mitochondrial_contamination,cells_ribo_contamination,cells_hb_contamination,cells_number_features,cells_number_counts))
+
+print(paste0("Cells remaining after filtering: ", length(filter_GEX_cells) ))
+
+seurat_septoclasts <- subset(seurat_septoclasts,cells = filter_GEX_cells)
+seurat_septoclasts <- subset(seurat_septoclasts,features = unique(features_to_keep) )
+
+seurat_septoclasts$SAMPLE <- "Septoclasts-1"
+seurat_septoclasts$GROUP <- "Septoclasts"
+
+
+lost_cells <- orig_cells %notin% colnames(seurat_septoclasts@assays$RNA)
+    kept_cells <- orig_cells %in% colnames(seurat_septoclasts@assays$RNA)
+    filtered_genes <- nrow(seurat_septoclasts@assays$RNA)
+
+    if(length(lost_cells[lost_cells=="TRUE"]) > 100 & length(kept_cells[kept_cells == "TRUE"]) > 100){
+      orig_sce_lost <- RNA_mat_orig[, lost_cells & colSums(RNA_mat_orig) > 0]
+      lost <- scuttle::calculateAverage(x=orig_sce_lost)
+      lost_df <- as.data.frame(lost)
+      rownames(lost_df) <- make.unique(names(lost), sep = "_")
+
+      orig_sce_kept <- RNA_mat_orig[,kept_cells & colSums(RNA_mat_orig) > 0]
+      kept <- calculateAverage(orig_sce_kept)
+      kept_df <- as.data.frame(kept)
+      rownames(kept_df) <- make.unique(names(kept), sep = "_")
+
+      logged <- edgeR::cpm(cbind(lost_df, kept_df), log=TRUE, prior.count=1)
+      logged_df <- as.data.frame(logged)%>% dplyr::mutate(abundance=rowMeans(.),logFC=lost-kept, gene=rownames(logged),significant=ifelse(abs(logFC) >= 0.25, "TRUE", "FALSE"))
+
+
+      DE_removed_Cells <- ggplot(logged_df, aes(x=abundance, y=logFC)) + geom_point(aes(color = significant)) + theme_cowplot() +
+        geom_text_repel(
+          data = top_n( subset(logged_df, abs(logFC) >= 0.25),50,wt=abs(logFC) ),
+          aes(label = gene),
+          size = 5,
+          box.padding = unit(0.35, "lines"),
+          point.padding = unit(0.3, "lines"),
+          max.overlaps= Inf
+        ) + labs(subtitle = paste0("Lost Cells: ",length(lost_cells[lost_cells=="TRUE"])," Kept Cells: ",length(kept_cells[kept_cells == "TRUE"]) ))
+    }else{
+      DE_removed_Cells <- ggplot() + labs(title="Not enough cells removed (<100) to display DE genes")
+
+    }
+
+ggsave(here(export.path_graphs,"/Septoclasts_DEGenes.png"),DE_removed_Cells, width=10, height=10, limitsize=F)
+
+top_genes_after <- plot_pct_genes(GetAssayData(seurat_septoclasts, slot = "counts"),top_n=10)
+ggsave(here(export.path_graphs,"/Septoclasts_TopGenes_after.png"),top_genes_after, width=10, height=10, limitsize=F)
+
+saveRDS(seurat_septoclasts,file=paste0(export.path_objects,"/Septoclasts_QC.Rds"))
+
+```
+
+### Cleaned
+
+```{r Septoclast_merged}
+seurat_septoclasts <- readRDS(file=paste0(export.path_objects,"/Septoclasts_QC.Rds"))
+
+sce_temp <- SingleCellExperiment(assays = list(counts = as.matrix(x = seurat_septoclasts@assays[["RNA"]]@counts)))
+clusters <- quickCluster(sce_temp, min.size=50)
+sce_temp <- computeSumFactors(sce_temp, cluster=clusters)
+sce_temp <- logNormCounts(sce_temp, log = FALSE)
+
+seurat_septoclasts@assays[["RNA"]]@data = log(x = assay(sce_temp, "normcounts") + 1)
+
+
+seurat_septoclasts <- seurat_septoclasts %>% FindVariableFeatures(selection.method = "vst", nfeatures = 5000, verbose = FALSE) %>% ScaleData(verbose = TRUE) %>% RunPCA(npcs = 50, verbose = FALSE)
+
+septoclasts_Elbow_Plot <- ElbowPlot(seurat_septoclasts,ndims = 50)
+
+ggsave(here(export.path_graphs,"/Septoclasts_Elbow_Plot.png"),septoclasts_Elbow_Plot, width=10, height=10, limitsize=F)
+
+max_dims <- 30
+
+seurat_septoclasts <- seurat_septoclasts %>% RunUMAP( reduction = "pca", dims = 1:max_dims) %>% FindNeighbors( reduction = "pca", dims = 1:max_dims) %>% FindClusters(resolution = c(0.6), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100)
+
+Septoclasts_UMAP_Plot <- DimPlot(seurat_septoclasts,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Septoclasts_UMAP_Plot.png"),Septoclasts_UMAP_Plot, width=10, height=10, limitsize=F)
+
+seurat_septoclasts$final_clusters <- as.character(Idents(seurat_septoclasts))
+
+saveRDS(seurat_septoclasts,file=paste0(export.path_objects,"/Septoclasts_clustered.Rds"))
+
+
+seurat_septoclasts_subset <- subset(x = seurat_septoclasts, idents = c("0","1","2","3","5","9","10"), invert = FALSE)
+
+Septoclasts_subset_UMAP_Plot <- DimPlot(seurat_septoclasts_subset,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Septoclasts_subset_UMAP_Plot.png"),Septoclasts_subset_UMAP_Plot, width=10, height=10, limitsize=F)
+
+seurat_septoclasts_subset <- seurat_septoclasts_subset %>% ScaleData( verbose = TRUE) %>% RunPCA(npcs = 50, verbose = FALSE)
+
+septoclasts_subset_Elbow_Plot <- ElbowPlot(seurat_septoclasts_subset,ndims = 50)
+
+ggsave(here(export.path_graphs,"/Septoclasts_subset_Elbow_Plot.png"),septoclasts_subset_Elbow_Plot, width=10, height=10, limitsize=F)
+
+max_dims <- 15
+
+seurat_septoclasts_subset <- RunUMAP(seurat_septoclasts_subset, reduction = "pca", dims = 1:max_dims)
+
+seurat_septoclasts_subset <- FindNeighbors(seurat_septoclasts_subset, reduction = "pca", dims = 1:max_dims)
+
+
+seurat_septoclasts_subset <- FindClusters(seurat_septoclasts_subset, resolution = c(0.3), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100)
+
+seurat_septoclasts_subset <- subset(x = seurat_septoclasts_subset, idents = c("6"), invert = TRUE)
+
+seurat_septoclasts_subset <- seurat_septoclasts_subset %>% ScaleData( verbose = TRUE) %>% RunPCA(npcs = 50, verbose = FALSE) %>% RunUMAP(reduction = "pca", dims = 1:max_dims) %>% FindNeighbors(reduction = "pca", dims = 1:max_dims) %>% FindClusters(resolution = c(0.3), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100)
+
+
+seurat_septoclasts_subset$final_clusters <- as.character( Idents(seurat_septoclasts_subset) )
+
+seurat_septoclasts_subset <- RenameIdents(object = seurat_septoclasts_subset, `1` = "OB")
+seurat_septoclasts_subset <- RenameIdents(object = seurat_septoclasts_subset, `5` = "pMSC")
+seurat_septoclasts_subset <- RenameIdents(object = seurat_septoclasts_subset, `4` = "Septoclasts")
+seurat_septoclasts_subset <- RenameIdents(object = seurat_septoclasts_subset, `2` = "mpMSC")
+seurat_septoclasts_subset <- RenameIdents(object = seurat_septoclasts_subset, `3` = "dpMSC2")
+seurat_septoclasts_subset <- RenameIdents(object = seurat_septoclasts_subset, `0` = "dpMSC1")
+
+seurat_septoclasts_subset$final_cell_type <- Idents(seurat_septoclasts_subset)
+
+Septoclasts_subset_UMAP_Plot <- DimPlot(seurat_septoclasts_subset,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Septoclasts_subset_reclustered_UMAP_Plot.png"),Septoclasts_subset_UMAP_Plot, width=10, height=10, limitsize=F)
+
+
+saveRDS(seurat_septoclasts_subset,file=paste0(export.path_objects,"/Septoclasts_subset.Rds"))
+
+```
+
+
+## Merged
+
+```{r all_merge}
+seurat_septoclasts_subset <- readRDS(file=paste0(export.path_objects,"/Septoclasts_subset.Rds"))
+
+mp_integrated <- readRDS(file=paste0(export.path_objects,"/Mp_merged.Rds"))
+
+
+mp_integrated <- SplitObject(mp_integrated, split.by = "SAMPLE")
+
+seurat_object_list <- c("Septoclasts"= seurat_septoclasts_subset, "Mp-1"=mp_integrated[[1]],"Mp-2"=mp_integrated[[2]])
+
+
+merged_anchors <- FindIntegrationAnchors(object.list = seurat_object_list, dims = 1:40)
+
+seurat_integrated <- IntegrateData(anchorset = merged_anchors, dims = 1:40)
+
+DefaultAssay(seurat_integrated) <- "integrated"
+
+seurat_integrated <- seurat_integrated %>% ScaleData(verbose = FALSE) %>% RunPCA(npcs = 50, verbose = FALSE)
+
+max_dims <- 25
+
+Integrated_Elbow_Plot <- ElbowPlot(seurat_integrated, ndims = 50)
+
+ggsave(here(export.path_graphs,"/Integrated_Elbow_Plot.png"),Integrated_Elbow_Plot, width=10, height=10, limitsize=F)
+
+seurat_integrated <- seurat_integrated %>% RunUMAP(reduction = "pca", dims = 1:max_dims) %>% FindNeighbors(reduction = "pca", dims = 1:max_dims) %>% FindClusters(resolution = c(0.4), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100,set.ident=TRUE)
+
+
+seurat_integrated$final_clusters <- as.character(Idents(seurat_integrated))
+
+DefaultAssay(seurat_integrated) <- "RNA"
+
+seurat_integrated <- RenameIdents(object = seurat_integrated, `5` = "bmEC")
+seurat_integrated <- RenameIdents(object = seurat_integrated, `4` = "mpEC")
+seurat_integrated <- RenameIdents(object = seurat_integrated, `8` = "aEC")
+seurat_integrated <- RenameIdents(object = seurat_integrated, `3` = "OB")
+seurat_integrated <- RenameIdents(object = seurat_integrated, `7` = "Septoclasts")
+seurat_integrated <- RenameIdents(object = seurat_integrated, `2` = "mpMSC")
+seurat_integrated <- RenameIdents(object = seurat_integrated, `0` = "dpMSC2")
+seurat_integrated <- RenameIdents(object = seurat_integrated, `1` = "dpMSC1")
+seurat_integrated <- RenameIdents(object = seurat_integrated, `6` = "pEC")
+
+Integrated_UMAP_Plot <- DimPlot(seurat_integrated,label=TRUE)
+
+seurat_integrated$final_cell_type <- Idents(seurat_integrated)
+
+ggsave(here(export.path_graphs,"/Integrated_UMAP_Plot.png"),Integrated_UMAP_Plot, width=10, height=10, limitsize=F)
+
+
+
+
+cellspercluster_Integrated <- Cells_per_Cluster(seurat=seurat_integrated,sample.ident="SAMPLE",cluster.ident="final_cell_type",level.order=c("Mp-1","Mp-2","Septoclasts-1"))
+
+ggsave(here(export.path_graphs,"/Integrated_CellNumbers.png"),cellspercluster_Integrated[[2]], width=20, height=10, limitsize=F)
+
+Idents(seurat_integrated) <- seurat_integrated$final_clusters
+
+saveRDS(seurat_integrated,file=paste0(export.path_objects,"/Integrated.Rds"))
+
+```
+
+## Clean
+```{r}
+seurat_integrated <- readRDS(file=paste0(export.path_objects,"/Integrated.Rds"))
+
+DefaultAssay(seurat_integrated) <- "integrated"
+
+seurat_integrated_subset <- subset(x = seurat_integrated, idents = c("0","1","2","3","7","8","4","5"), invert = FALSE)
+DefaultAssay(seurat_integrated_subset) <- "integrated"
+
+seurat_integrated_subset <- seurat_integrated_subset %>% ScaleData( verbose = FALSE) %>% RunPCA( npcs = 50, verbose = FALSE) %>% RunUMAP( reduction = "pca", dims = 1:15) %>% FindNeighbors(integrated_subset, reduction = "pca", dims = 1:15) %>% FindClusters(resolution = c(0.4), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100)
+
+Integrated_Subset_UMAP_Plot <- DimPlot(seurat_integrated_subset,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Integrated_subset_UMAP_Plot.png"),Integrated_Subset_UMAP_Plot, width=10, height=10, limitsize=F)
+
+seurat_integrated_subset$final_clusters <- as.character(Idents(seurat_integrated_subset))
+
+DefaultAssay(seurat_integrated_subset) <- "RNA"
+
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `2` = "Bone Cells")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `0` = "pvMSC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `1` = "pvMSC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `3` = "pvMSC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `4` = "mpEC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `5` = "bmEC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `7` = "aEC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `6` = "Septoclasts")
+
+Integrated_Subset_Named_UMAP_Plot <- DimPlot(seurat_integrated_subset,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Integrated_subset_named_UMAP_Plot.png"),Integrated_Subset_Named_UMAP_Plot, width=10, height=10, limitsize=F)
+
+seurat_integrated_subset$final_cell_type <- Idents(seurat_integrated_subset)
+
+Idents(seurat_integrated_subset) <- seurat_integrated_subset$final_clusters
+
+saveRDS(seurat_integrated_subset,file=paste0(export.path_objects,"/Integrated_subset_withBoneCells.Rds"))
+```
+
+## Focused Subset
+```{r}
+seurat_integrated <- readRDS(file=paste0(export.path_objects,"/Integrated_subset_withBoneCells.Rds"))
+
+Idents(seurat_integrated) <- seurat_integrated$final_clusters
+
+DefaultAssay(seurat_integrated) <- "integrated"
+
+seurat_integrated_subset <- subset(x = seurat_integrated, idents = c("2","3","6","4","5","7"), invert = FALSE)
+
+seurat_integrated_subset <- seurat_integrated_subset %>% ScaleData( verbose = FALSE) %>% RunPCA( npcs = 50, verbose = FALSE) %>% RunUMAP( reduction = "pca", dims = 1:15) %>% FindNeighbors(integrated_subset, reduction = "pca", dims = 1:15) %>% FindClusters(resolution = c(0.3), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100)
+
+seurat_integrated_subset <- subset(x = seurat_integrated_subset, idents = c("6"), invert = TRUE)
+
+seurat_integrated_subset <- seurat_integrated_subset %>% ScaleData( verbose = FALSE) %>% RunPCA( npcs = 50, verbose = FALSE) %>% RunUMAP( reduction = "pca", dims = 1:15) %>% FindNeighbors(integrated_subset, reduction = "pca", dims = 1:15) %>% FindClusters(resolution = c(0.3), modularity.fxn=1,algorithm=2,force.recalc = TRUE,n.start=500,n.iter=100)
+
+Integrated_Subset_UMAP_Plot <- DimPlot(seurat_integrated_subset,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Integrated_Focused_subset_UMAP_Plot.png"),Integrated_Subset_UMAP_Plot, width=10, height=10, limitsize=F)
+
+seurat_integrated_subset$final_clusters <- as.character(Idents(seurat_integrated_subset))
+
+DefaultAssay(seurat_integrated_subset) <- "RNA"
+
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `0` = "Bone Cells")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `6` = "Bone Cells")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `1` = "pvMSC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `2` = "mpEC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `3` = "bmEC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `5` = "aEC")
+seurat_integrated_subset <- RenameIdents(object = seurat_integrated_subset, `4` = "Septoclasts")
+
+Integrated_Subset_Named_UMAP_Plot <- DimPlot(seurat_integrated_subset,label=TRUE)
+
+ggsave(here(export.path_graphs,"/Integrated_Focused_subset_named_UMAP_Plot.png"),Integrated_Subset_Named_UMAP_Plot, width=10, height=10, limitsize=F)
+
+seurat_integrated_subset$final_cell_type <- Idents(seurat_integrated_subset)
+
+saveRDS(seurat_integrated_subset,file=paste0(export.path_objects,"/Integrated_focused_subset_withBoneCells.Rds"))
+```
+
+##Monocle 2 on Stromal Subset
+```{r}
+library(monocle)
+seurat_stromal_subset <- readRDS(paste0(export.path_objects,"/Septoclasts_subset.Rds"))
+
+DefaultAssay(seurat_stromal_subset) <- "RNA"
+seurat_stromal_subset[["SAMPLE"]] <- "Septoclasts"
+
+DE_genes <- as.data.frame ( FindAllMarkers(object = seurat_stromal_subset, only.pos = TRUE, min.diff.pct = -Inf, min.pct = 0, logfc.threshold = log2(x = 1.5), test.use = "wilcox",assay="RNA",verbose = TRUE, slot = "counts")) %>% filter(p_val_adj <= 0.001) %>% group_by(cluster) %>% top_n(n = 100, wt = avg_log2FC) %>% pull(gene)
+
+seurat_stromal_subset_HVG <- VariableFeatures( FindVariableFeatures( seurat_stromal_subset,assay="RNA",selection.method = "vst",nfeatures = 2000,num.bin=50 ) )
+
+assay <- GetAssayData(object = seurat_stromal_subset, slot = "counts",assay = "RNA")
+
+fdata_stromal <- as.data.frame(rownames(assay)) %>% dplyr::rename(gene_short_name = "rownames(assay)") %>% dplyr::mutate(rownames = gene_short_name) %>% column_to_rownames("rownames")
+
+clusternumbers <- seurat_stromal_subset[["seurat_clusters"]] %>% rownames_to_column(var = "rownames")
+samples <- seurat_stromal_subset[["SAMPLE"]] %>% rownames_to_column(var = "rownames")
+
+clusternames <- as.data.frame(Idents(object = seurat_stromal_subset)) %>% tibble::rownames_to_column(var = "rownames") %>% dplyr::mutate(clustername = Idents(object = seurat_stromal_subset)) %>%
+  dplyr::select(rownames,clustername)
+
+pdata_stromal <- as.data.frame(colnames(assay)) %>% dplyr::mutate(cell_name = colnames(assay)) %>% dplyr::mutate(rownames = cell_name, doublets=seurat_stromal_subset@meta.data[["scDblFinder.class"]],counts=seurat_stromal_subset@meta.data[["total_counts"]],mt=seurat_stromal_subset@meta.data[["subsets_MT_percent"]],phase=seurat_stromal_subset@meta.data[["Phase"]]) %>% dplyr::left_join(clusternames, by="rownames") %>% dplyr::left_join(clusternumbers, by="rownames") %>% dplyr::select(-"colnames(assay)",-cell_name) %>% tibble::column_to_rownames("rownames")
+
+pd <- new("AnnotatedDataFrame", data = pdata_stromal)
+fd <- new("AnnotatedDataFrame", data = fdata_stromal)
+
+cds_stromal <- newCellDataSet(assay, phenoData = pd, featureData = fd,expressionFamily=negbinomial.size())
+
+cds_stromal$clustername <- factor(cds_stromal$clustername,ordered=TRUE,levels=c("Septoclasts","dpMSC1","dpMSC2","mpMSC","OB","pMSC"))
+
+options(warn=-1)
+
+cds_stromal <- estimateSizeFactors(cds_stromal)
+cds_stromal <- estimateDispersions(cds_stromal)
+
+
+cds_stromal <- setOrderingFilter(cds_stromal, DE_genes)
+
+
+
+cds_stromal <- reduceDimension(cds_stromal, max_components = 2,method = 'DDRTree', num_dim = 10,verbose = T,scaling=TRUE,norm_method ="vstExprs")
+cds_stromal <- orderCells(cds_stromal)
+
+saveRDS(cds_stromal,file=paste0(export.path_objects,"/Monocle2_Septoclast_subset.Rds"))
+```
+

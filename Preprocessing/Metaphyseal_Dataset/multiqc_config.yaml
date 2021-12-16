@@ -1,0 +1,15 @@
+title: "Comprehensive QC Report for scRNA-Seq Analysis"
+intro_text: "MultiQC reports summarising analysis results."
+
+report_header_info:
+    - Contact E-mail: 'paul-georg.majev@mpi-muenster.mpg.de'
+    - Application Type: 'scRNA-seq'
+    - Project Type: 'Application'
+    - Sequencing Platform: 'HiSeq 2500 High Output V4'
+    - Sequencing Setup: '25x75'
+
+extra_fn_clean_exts:
+    - type: remove
+      pattern: _output
+    - type: remove
+      pattern: _1

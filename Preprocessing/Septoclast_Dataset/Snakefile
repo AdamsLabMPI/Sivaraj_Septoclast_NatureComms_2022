@@ -1,0 +1,103 @@
+import pandas as pd
+
+#####Load Configuration & Samples#####
+
+#When changing Chromium Number, check for UMI length and Whitelist in STAR and chromium version in Alevin
+#####
+configfile: "config.yaml"
+
+SAMPLE_FILE = pd.read_table(config["samples"],header=None,sep=";")
+SAMPLES = SAMPLE_FILE[0].tolist()
+GROUP = SAMPLE_FILE[1].tolist()
+
+genome_folder = config["genome_folder"]
+
+os.makedirs("results/STAR/", exist_ok=True)
+os.makedirs(genome_folder, exist_ok=True)
+
+###Request final output#####
+rule final_output:
+    input:
+        starsolo_report=expand("results/STAR/{sample_id}_Aligned.sortedByCoord.out.bam", sample_id=SAMPLES),
+        genome = config["genome_unzipped_path"],
+        gtf = config["transcriptome_gtf_path"],
+        multiqc="MultiQC_Output.html"
+
+
+rule download_genome:
+    output:
+        genome = config["genome_unzipped_path"],
+        gtf = config["transcriptome_gtf_path"]
+    threads: 1
+    conda: "envs/gunzip.yaml"
+    message: "Downloading Genome and GTF with {threads} threads"
+    params:
+        mem="1G",
+        genome_dir= config["genome_folder"]
+    shell:
+        "wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M23/GRCm38.primary_assembly.genome.fa.gz -P {params.genome_dir} && wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M23/gencode.vM23.primary_assembly.annotation.gtf.gz -P {params.genome_dir} && gunzip -c {params.genome_dir}GRCm38.primary_assembly.genome.fa.gz > {output.genome} && gunzip -c {params.genome_dir}gencode.vM23.primary_assembly.annotation.gtf.gz > {output.gtf} && cat genomes/additional.fa >> {output.genome} && cat genomes/additional.gtf >> {output.gtf}"
+
+#####Run FASTP on samples#####
+rule fastp:
+    input:
+        r1= "data/reads/{sample_id}_R1.fastq.gz",
+        r2= "data/reads/{sample_id}_R2.fastq.gz"
+    output:
+        r1= "data/fastp/{sample_id}_1.fastq.gz",
+        r2= "data/fastp/{sample_id}_2.fastq.gz",
+        json="data/fastp/{sample_id}_fastp.json",
+        html="data/fastp/{sample_id}_fastp.html"
+    threads: config["threads_fastp"]
+    conda: "envs/fastp.yaml"
+    message: "Executing FastP with {threads} threads on {wildcards.sample_id}."
+    params:
+        mem="20G",
+        length_req = config["fastp_min_read_length"],
+    shell:
+        "fastp -i {input.r1} -I {input.r2} -o {output.r1} -O {output.r2} --average_qual 20 --detect_adapter_for_pe --cut_tail --cut_tail_mean_quality 20 --cut_tail_window_size 1 --trim_poly_g --correction --length_required {params.length_req} --thread {threads} --overrepresentation_analysis --json data/fastp/{wildcards.sample_id}_fastp.json --html data/fastp/{wildcards.sample_id}_fastp.html"
+
+rule STAR_index:
+    input:
+        genome = config["genome_unzipped_path"],
+        gtf = config["transcriptome_gtf_path"],
+        genome_dir= config["genome_folder"]
+    output:
+        index= expand("{genome_folder}SA",genome_folder = config["genome_folder"])
+    threads: 40
+    message: "Executing STAR with {threads} threads to create the Genome Index."
+    conda: "envs/STARsolo.yaml"
+    params:
+        mem="40G"
+    shell:
+        "STAR --runThreadN {threads} --runMode genomeGenerate --genomeDir {input.genome_dir} --genomeFastaFiles {input.genome} --sjdbGTFfile {input.gtf} --sjdbOverhang 90 --outFileNamePrefix STAR_Index"
+
+rule STARsolo:
+    input:
+        read = "data/fastp/{sample_id}_2.fastq.gz",
+        barcode = "data/fastp/{sample_id}_1.fastq.gz",
+        genome_dir= config["genome_folder"],
+	index= expand("{genome_folder}SA",genome_folder = config["genome_folder"])
+    output:
+        report= "results/STAR/{sample_id}_Aligned.sortedByCoord.out.bam"
+    threads: 40
+    params:
+        mem="40G"
+    message: "Executing STARsolo with {threads} threads to create a Gene-Count Matrix."
+    conda: "envs/STARsolo.yaml"
+    shell:
+        "ulimit -n 4000 && STAR --runThreadN {threads} --genomeDir {input.genome_dir} --readFilesIn {input.read} {input.barcode} --readFilesCommand zcat --outFileNamePrefix results/STAR/{wildcards.sample_id}_ --outSAMtype BAM SortedByCoordinate --outSAMattributes NH HI nM AS CR UR CB UB GX GN sS sQ sM --soloType CB_UMI_Simple --soloCBwhitelist ../whitelists/10x_V3_whitelist.txt --soloCBstart 1 --soloCBlen 16 --soloUMIstart 17 --soloUMIlen 10 --soloBarcodeReadLength 1 --soloStrand Forward --soloCellFilter None --soloFeatures Gene GeneFull SJ Velocyto --soloCBmatchWLtype 1MM_multi_pseudocounts --soloUMIdedup 1MM_All --soloUMIfiltering MultiGeneUMI "
+
+rule multiqc:
+    input:
+        fastp=expand("data/fastp/{sample_id}_fastp.json", sample_id=SAMPLES),
+        bam= expand("results/STAR/{sample_id}_Aligned.sortedByCoord.out.bam", sample_id=SAMPLES),
+        config= "multiqc_config.yaml"
+    output:
+        multiqc="MultiQC_Output.html"
+    threads: 4
+    message: "Executing MultiQC with {threads} threads to create QC Reports"
+    conda: "envs/multiqc.yaml"
+    params:
+        mem="1G"
+    shell:
+        "export LC_ALL=en_US.utf8 && multiqc {input.fastp} results/STAR/ --filename {output.multiqc} --no-data-dir --config {input.config}"
