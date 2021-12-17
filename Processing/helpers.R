@@ -39,7 +39,7 @@ kneeplot <- function(bc_rank,upper,lower){
 }
 
 
-Import_STAR_Velocyto <- function(folder_path="/home/pmajev/Lats2_Kishor/3wk_12wk_compare/bSC_3w/results/STAR/bSC_3w_1_Solo.out/"){
+Import_STAR_Velocyto <- function(folder_path){
 
   print("Loading RNA matrix...")
   RNA_mat <- readMM(paste0(folder_path,"Gene/raw/matrix.mtx"))
