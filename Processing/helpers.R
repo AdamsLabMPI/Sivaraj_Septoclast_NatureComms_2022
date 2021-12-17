@@ -1,33 +1,13 @@
-needed_packages <- c("Seurat","devtools","Matrix","scales","ensembldb","biomaRt","gghighlight","ggstatsplot","patchwork","ggplot2","DropletUtils","ggrepel","ggforce","cluster","ggplotify","tidyverse","SingleCellExperiment","scater","purrr","stringr","scran", "cowplot","RColorBrewer","BiocSingular","irlba","fitdistrplus","scales","wesanderson","clustree","ggpubr","scDblFinder","writexl","SeuratWrappers","AnnotationDbi","org.Mm.eg.db","SingleR","harmony","pheatmap","sctransform","zeallot")
+check.packages <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    BiocManager::install(new.pkg, update = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+}
 
+needed_packages <- c("Seurat","devtools","Matrix","scales","ensembldb","biomaRt","gghighlight","patchwork","ggplot2","DropletUtils","ggrepel","ggforce","cluster","ggplotify","tidyverse","SingleCellExperiment","scater","purrr","stringr","scran", "cowplot","RColorBrewer","BiocSingular","irlba","wesanderson","clustree","ggpubr","scDblFinder","writexl","zeallot","ComplexHeatmap")
 
-
-lapply(needed_packages, require, character.only = TRUE)
-
-custom_colors <- list()
-
-colors_dutch <- c(
-  '#FFC312','#C4E538','#12CBC4','#FDA7DF','#ED4C67',
-  '#F79F1F','#A3CB38','#1289A7','#D980FA','#B53471',
-  '#EE5A24','#009432','#0652DD','#9980FA','#833471',
-  '#EA2027','#006266','#1B1464','#5758BB','#6F1E51'
-)
-
-colors_spanish <- c(
-  '#40407a','#706fd3','#3d3a33','#34ace0','#33d9b2',
-  '#2c2c54','#474787','#aaa69d','#227093','#218c74',
-  '#ff5252','#ff793f','#d1ccc0','#ffb142','#ffda79',
-  '#b33939','#cd6133','#84817a','#cc8e35','#ccae62'
-)
-
-custom_colors$discrete <- c(colors_dutch, colors_spanish)
-
-custom_colors$cell_cycle <- setNames(
-  c('#45aaf2', '#f1c40f', '#e74c3c', '#7f8c8d'),
-  c('G1',      'S',       'G2M',     '-')
-)
-color_scale <- c("#D869C2","#E1B3A1","#889390","#8168D2","#C03FE4","#D9DF51","#72DC8C","#74CDE2","#829DD9","#D0DE95","#DEA455","#86E556","#7BE0C1","#D4E5D6","#D9606A","#DCB4DC")
-
+check.packages(needed_packages)
 
 options(width = 900)
 options(future.globals.maxSize= (10050*1024^2))
