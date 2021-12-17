@@ -155,7 +155,7 @@ Figure_2c <- Feature_Plot(seurat_stromal_subset,
 
 Figure_2c
 
-ggsave(here::here(export.path_graphs,"Figure_2c.pdf"),Figure_2c, width=15, height=10, limitsize=F)
+ggsave(here::here(export.path_graphs,"Figure_2c.pdf"),Figure_2c, width=15, height=15, limitsize=F)
 ```
 
 ## Figure 2d + e + f
@@ -342,7 +342,7 @@ Figure_4b <- UMAP_Plot(seurat_stromal,
 
 Figure_4b
 
-ggsave(here::here(export.path_graphs,"Figure_4b.pdf"),Figure_4b, width=6, height=5, limitsize=F)
+ggsave(here::here(export.path_graphs,"Figure_4b.pdf"),Figure_4b, width=5, height=5, limitsize=F)
 ```
 
 ## Figure 4c
@@ -410,7 +410,7 @@ Figure_4d <- Feature_Plot(seurat_stromal,
                           min.cutoff=0,
                           reduction="umap")
 
-ggsave(here::here(export.path_graphs,"Figure_4d.pdf"),Figure_4d, width=6, height=5, limitsize=F)
+ggsave(here::here(export.path_graphs,"Figure_4d.pdf"),Figure_4d, width=10, height=10, limitsize=F)
 
 Figure_4d
 ```
@@ -565,7 +565,7 @@ Supp_Figure_4b <- UMAP_Plot(seurat_septoclasts,
 
 Supp_Figure_4b
 
-ggsave(here::here(export.path_graphs,"Supp_Figure_4b.pdf"),Supp_Figure_4b, width=5, height=5, limitsize=F)
+ggsave(here::here(export.path_graphs,"SuppFigure_4b.pdf"),Supp_Figure_4b, width=5, height=5, limitsize=F)
 ```
 
 ## Supplementary Figure 4c
@@ -812,7 +812,7 @@ SuppFigure_8c <- Feature_Plot(seurat_merged_all,
 
 SuppFigure_8c
 
-ggsave(here::here(export.path_graphs,"SuppFigure_8c.pdf"),SuppFigure_8c, width=5, height=5, limitsize=F)
+ggsave(here::here(export.path_graphs,"SuppFigure_8c.pdf"),SuppFigure_8c, width=15, height=10, limitsize=F)
 ```
 
 ## Supplementary Figure 8d
@@ -881,7 +881,7 @@ SuppFigure_8e <- Feature_Plot(seurat_all_integrated,
 
 SuppFigure_8e
 
-ggsave(here::here(export.path_graphs,"SuppFigure_8e.pdf"),SuppFigure_8e, width=5, height=5, limitsize=F)
+ggsave(here::here(export.path_graphs,"SuppFigure_8e.pdf"),SuppFigure_8e, width=15, height=10, limitsize=F)
 ```
 
 # Further Figures
@@ -1001,8 +1001,4 @@ all_merged_cellcycle <- UMAP_Plot(seurat_merged_all,
           y.axis_line=TRUE)
 
 all_merged_cellcycle
-```
-
-```{r}
-
 ```
