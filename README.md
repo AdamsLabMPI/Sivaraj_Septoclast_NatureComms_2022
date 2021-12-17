@@ -1,4 +1,4 @@
-Attention: Handling this repository may require the Git LFS extension to be installed on your system.
+**Attention***: Handling this repository may require the Git LFS extension to be installed on your system.
 
 This is the git repository containing all code needed to reproduce most computationally generated Figures presented in "Mesenchymal stromal cell-derived septoclasts resorb cartilage during developmental ossification and fracture healing" by Sivaraj et al. published in Nature Communications, 2022. This does not include Figures related to the Fracture Experiments presented in the second half of the Paper.
 
